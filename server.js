@@ -20,6 +20,4 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.use('/api', apiRoutes)
 
-app.listen(PORT, () => {
-  console.log(`server jalan di http://localhost:${PORT}`)
-})
+app.listen(3300, () => console.log("running on 3300"));
