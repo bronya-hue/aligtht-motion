@@ -21,6 +21,7 @@ app.use('/api', apiRoutes)
 
 // ...
 const PORT = process.env.PORT || 3300;
+console.log(`[DEBUG] Railway PORT variable is: ${process.env.PORT}`);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend listening on 0.0.0.0:${PORT}`);
 });
