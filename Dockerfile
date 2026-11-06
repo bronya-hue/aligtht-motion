@@ -12,8 +12,8 @@ COPY . .
 # Instal dependensi Node.js
 RUN npm install
 
-# Instal dependensi Python
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Instal dependensi Python (tambahkan --break-system-packages karena PEP 668)
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Expose port 8080
 EXPOSE 8080
