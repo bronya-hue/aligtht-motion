@@ -19,5 +19,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.use('/api', apiRoutes)
 
+// ...
 const PORT = process.env.PORT || 3300;
-app.listen(PORT, () => console.log(`Backend listening on ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Backend listening on 0.0.0.0:${PORT}`);
+});
