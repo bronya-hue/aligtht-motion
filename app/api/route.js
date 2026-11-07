@@ -17,23 +17,16 @@ router.use('/stats', statsRoute);
 router.use('/email', emailRoute);
 router.use('/auto', autoRoute);
 
-// ==========================================
-// ENDPOINT BARU: Cek Inbox untuk Fitur /login
-// ==========================================
 router.post('/inbox', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ success: false, message: 'Email required' });
 
     const account = mailAccounts.get(email);
     if (!account) {
-        return res.json({ 
-            success: false, 
-            message: 'Akun email tidak ditemukan. Pastikan email ini dibuat melalui bot (fitur Auto Premium), atau server bot baru saja restart.' 
-        });
+        return res.json({ success: false, message: 'Akun email tidak ditemukan. Pastikan dibuat dari bot ini.' });
     }
 
     try {
-        // 1. Dapatkan token baru dari mail.tm menggunakan password yang tersimpan
         const tokenRes = await fetch('https://api.mail.tm/token', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -41,11 +34,8 @@ router.post('/inbox', async (req, res) => {
         });
         const tokenData = await tokenRes.json();
         
-        if (!tokenData.token) {
-            return res.json({ success: false, message: 'Gagal login ke mail.tm. Sesi mungkin sudah expired, silakan buat akun baru.' });
-        }
+        if (!tokenData.token) return res.json({ success: false, message: 'Gagal login ke mail.tm.' });
 
-        // 2. Ambil daftar pesan
         const msgRes = await fetch('https://api.mail.tm/messages', {
             headers: { 'Authorization': `Bearer ${tokenData.token}` }
         });
@@ -53,29 +43,41 @@ router.post('/inbox', async (req, res) => {
         const messages = msgData['hydra:member'] || [];
 
         if (messages.length === 0) {
-            return res.json({ 
-                success: false, 
-                message: 'Inbox kosong. Buka aplikasi Alight Motion, masukkan email ini, klik "Kirim Magic Link", lalu tunggu 10 detik dan coba /login lagi.' 
-            });
+            return res.json({ success: false, message: 'Inbox kosong. Klik "Kirim Magic Link" di aplikasi dulu.' });
         }
 
-        // 3. Ambil pesan terbaru dan download raw email untuk ekstrak link
         const latestMsg = messages[0];
         const downloadRes = await fetch(`https://api.mail.tm/messages/${latestMsg.id}/download`, {
             headers: { 'Authorization': `Bearer ${tokenData.token}` }
         });
         const raw = await downloadRes.text();
         
-        // Decode format email (quoted-printable)
         let joined = raw.replace(/=\r?\n/g, '').replace(/=3D/g, '=');
-        
-        // Cari URL lengkap yang mengandung oobCode
         const urlMatch = joined.match(/https?:\/\/[^\s"'<>]+oobCode[^\s"'<>]+/i);
         
         if (urlMatch) {
-            return res.json({ success: true, link: urlMatch[0] });
+            let link = urlMatch[0].replace(/&amp;/g, '&');
+            
+            // =========================================================
+            // PERBAIKAN: Ambil link asli Alight Motion & Kode OOB
+            // =========================================================
+            const redirectMatch = link.match(/[?&]link=([^&]+)/);
+            if (redirectMatch) {
+                // Jika link adalah redirector Firebase, ambil link aslinya (alightcreative.com)
+                link = decodeURIComponent(redirectMatch[1]);
+            }
+            
+            // Ambil kode oobCode (misal: sFoK26Ssgv7lX5E...)
+            const oobMatch = link.match(/oobCode(?:%3D|=)([a-zA-Z0-9_-]+)/i);
+            const oobCode = oobMatch ? oobMatch[1] : 'Tidak ditemukan';
+
+            return res.json({ 
+                success: true, 
+                link: link.replace(/\/\//g, '/'), // Bersihkan double slash
+                oobCode: oobCode
+            });
         } else {
-            return res.json({ success: false, message: 'Email masuk, tapi link verifikasi tidak ditemukan di dalamnya.' });
+            return res.json({ success: false, message: 'Email masuk, tapi link tidak ditemukan.' });
         }
 
     } catch (error) {
