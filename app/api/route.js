@@ -1,97 +1,108 @@
 const express = require('express');
-const statusRoute = require('./status/route');
-const sendLinkRoute = require('./send-link/route');
-const verifyLinkRoute = require('./verify-link/route');
-const statsRoute = require('./stats/route');
-const emailRoute = require('./email/route');
-const autoRoute = require('./auto/route');
-const mailAccounts = require('../../lib/mail-store');
+const crypto = require('crypto');
 const fetch = require('node-fetch');
+const mailAccounts = require('../../../lib/mail-store');
+const { getProxyAgent } = require('../../../lib/proxy-manager');
+const auth = require('../../../lib/auth'); // Kode rahasia Alight Motion
 
 const router = express.Router();
+const MAILTM_BASE = 'https://api.mail.tm';
+const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
-// Daftarkan semua route bawaan
-router.use('/status', statusRoute);
-router.use('/send-link', sendLinkRoute);
-router.use('/verify-link', verifyLinkRoute);
-router.use('/stats', statsRoute);
-router.use('/email', emailRoute);
-router.use('/auto', autoRoute);
-
-// ==========================================
-// ENDPOINT: Cek Inbox untuk Fitur /login
-// ==========================================
-router.post('/inbox', async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: 'Email required' });
-
-    const account = mailAccounts.get(email);
-    if (!account) {
-        return res.json({ 
-            success: false, 
-            message: 'Akun email tidak ditemukan. Server baru saja restart. Silakan klik ⚡ Auto Premium untuk membuat akun baru.' 
-        });
-    }
-
+router.post('/', async (req, res) => {
+    const log = [];
+    const push = (step, msg) => log.push({ step, message: msg, at: new Date().toISOString() });
+    
     try {
-        // 1. Dapatkan token baru dari mail.tm menggunakan password yang tersimpan
-        const tokenRes = await fetch('https://api.mail.tm/token', {
+        const agent = getProxyAgent();
+        push('init', agent ? 'Menggunakan Proxy...' : 'Tanpa Proxy...');
+        
+        // 1. Ambil Domain mail.tm (Rotasi Domain)
+        const domainRes = await fetch(`${MAILTM_BASE}/domains`, { agent });
+        const domainData = await domainRes.json();
+        const domains = domainData['hydra:member'] || [];
+        if (!domains.length) throw new Error('mail.tm: no domains available');
+        
+        const randomDomain = domains[Math.floor(Math.random() * domains.length)].domain;
+        const address = `neo${crypto.randomBytes(5).toString('hex')}@${randomDomain}`;
+        const password = crypto.randomBytes(12).toString('base64url') + 'X1!';
+        
+        // 2. Daftar Email
+        push('email', `Mendaftarkan ${address}...`);
+        const createRes = await fetch(`${MAILTM_BASE}/accounts`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ address: email, password: account.password })
+            body: JSON.stringify({ address, password }),
+            agent
+        });
+        if (!createRes.ok) throw new Error(`mail.tm create failed (Proxy mati/IP blokir)`);
+        
+        // 3. Ambil Token Inbox
+        const tokenRes = await fetch(`${MAILTM_BASE}/token`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ address, password }),
+            agent
         });
         const tokenData = await tokenRes.json();
+        if (!tokenData.token) throw new Error('mail.tm: failed to get token');
         
-        if (!tokenData.token) {
-            return res.json({ success: false, message: 'Gagal login ke mail.tm. Sesi mungkin sudah expired.' });
-        }
-
-        // 2. Ambil daftar pesan
-        const msgRes = await fetch('https://api.mail.tm/messages', {
-            headers: { 'Authorization': `Bearer ${tokenData.token}` }
-        });
-        const msgData = await msgRes.json();
-        const messages = msgData['hydra:member'] || [];
-
-        if (messages.length === 0) {
-            return res.json({ 
-                success: false, 
-                message: 'Inbox kosong. Buka aplikasi Alight Motion, masukkan email ini, klik "Kirim Magic Link", lalu tunggu 10 detik dan coba /login lagi.' 
-            });
-        }
-
-        // 3. Ambil pesan terbaru (download raw email)
-        const latestMsg = messages[0];
-        const downloadRes = await fetch(`https://api.mail.tm/messages/${latestMsg.id}/download`, {
-            headers: { 'Authorization': `Bearer ${tokenData.token}` }
-        });
-        const raw = await downloadRes.text();
+        // Simpan ke gudang
+        mailAccounts.set(address, { password, token: tokenData.token });
         
-        // 4. Decode format email (quoted-printable) agar link terbaca
-        let joined = raw.replace(/=\r?\n/g, '').replace(/=3D/g, '=');
+        // 4. Tembak Alight Motion
+        push('link', 'Mengirim magic link...');
+        await delay(Math.floor(Math.random() * 3000) + 2000); 
+        const lr = await auth.link(address); 
+        if (!lr.ok) throw new Error(`link gagal: ${lr.why}`);
         
-        // 5. Cari URL asli Firebase (jangan di-decode/diubah)
-        const urlMatch = joined.match(/https?:\/\/[^\s"'<>]+oobCode[^\s"'<>]+/i);
-        
-        if (urlMatch) {
-            // Ambil link persis seperti aslinya, hanya perbaiki karakter &amp; jadi &
-            let fullFirebaseLink = urlMatch[0].replace(/&amp;/g, '&');
+        // 5. Polling Inbox
+        push('poll', 'Menunggu email masuk...');
+        let magicLink = null;
+        for (let i = 0; i < 20; i++) {
+            await delay(3000);
+            const msgRes = await fetch(`${MAILTM_BASE}/messages`, { headers: { 'Authorization': `Bearer ${tokenData.token}` }, agent });
+            const msgData = await msgRes.json();
+            const messages = msgData['hydra:member'] || [];
             
-            // Ekstrak oobCode (hanya untuk ditampilkan sebagai info tambahan)
-            const oobMatch = fullFirebaseLink.match(/oobCode(?:%3D|=)([a-zA-Z0-9_-]+)/i);
-            const oobCode = oobMatch ? oobMatch[1] : 'Tidak ditemukan';
-
-            return res.json({ 
-                success: true, 
-                link: fullFirebaseLink, 
-                oobCode: oobCode
-            });
-        } else {
-            return res.json({ success: false, message: 'Email masuk, tapi link verifikasi tidak ditemukan di dalamnya.' });
+            if (messages.length > 0) {
+                const downloadRes = await fetch(`${MAILTM_BASE}/messages/${messages[0].id}/download`, { headers: { 'Authorization': `Bearer ${tokenData.token}` }, agent });
+                const raw = await downloadRes.text();
+                let joined = raw.replace(/=\r?\n/g, '').replace(/=3D/g, '=');
+                const urlMatch = joined.match(/https?:\/\/[^\s"'<>]+oobCode[^\s"'<>]+/i);
+                if (urlMatch) {
+                    magicLink = urlMatch[0].replace(/&amp;/g, '&');
+                    break;
+                }
+            }
         }
-
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        
+        if (!magicLink) throw new Error('link verifikasi tidak ditemukan di email');
+        
+        // 6. Verifikasi & Aktivasi
+        push('verify', 'Memverifikasi link...');
+        const v = await auth.auth(address, magicLink);
+        if (!v.ok) throw new Error(`verifikasi gagal: ${v.why}`);
+        
+        push('premium', 'Mengaktifkan premium...');
+        const premium = await auth.pro(v.id);
+        
+        return res.json({
+            success: premium.ok,
+            message: premium.ok ? `Premium aktif` : `Gagal aktivasi`,
+            data: {
+                email: address,
+                uid: v.uid,
+                orderId: premium.order || null,
+                validUntil: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toLocaleDateString('id-ID'),
+                idToken: v.id
+            },
+            log
+        });
+        
+    } catch (e) {
+        console.error('Auto Error:', e);
+        return res.status(500).json({ success: false, message: e.message, log });
     }
 });
 
