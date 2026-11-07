@@ -53,11 +53,19 @@ async def cb_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     d = data.get("data", {})
     text = (
-        f"✅ *Premium Aktif*\n\n"
+        f"✅ *Akun Premium Berhasil Dibuat!*\n\n"
         f"📧 Email: `{d.get('email')}`\n"
         f"🆔 UID: `{d.get('uid')}`\n"
         f"🧾 Order: `{d.get('orderId')}`\n"
-        f"📅 Valid: `{d.get('validUntil')}`\n"
+        f"📅 Valid: `{d.get('validUntil')}`\n\n"
+        f"📌 *CARA LOGIN DI APLIKASI ALIGHT MOTION:*\n"
+        f"1. Buka aplikasi Alight Motion di HP Anda.\n"
+        f"2. Pilih menu *Login with Email*.\n"
+        f"3. Masukkan email di atas: `{d.get('email')}`\n"
+        f"4. Klik tombol 'Kirim Magic Link' di aplikasi.\n"
+        f"5. Ketik perintah ini di bot untuk mengambil link login:\n"
+        f"   `/login {d.get('email')}`\n"
+        f"6. Bot akan mengirim link. Klik link tersebut, dan akun premium siap dipakai! 🎉"
     )
     await q.edit_message_text(text, parse_mode="Markdown")
 
@@ -78,6 +86,33 @@ async def cb_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"📊 Statistik:\n`{r.text[:3500]}`", parse_mode="Markdown")
     except Exception as e:
         await q.edit_message_text(f"❌ {e}")
+
+
+async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if len(ctx.args) == 0:
+        await update.message.reply_text("Format salah. Gunakan: `/login email@domain.com`", parse_mode="Markdown")
+        return
+        
+    email = ctx.args[0]
+    await update.message.reply_text(f"⏳ Mengecek inbox untuk `{email}`...\n_(Tunggu hingga 30 detik)_", parse_mode="Markdown")
+    
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(f"{BACKEND}/api/inbox", json={"email": email})
+            data = r.json()
+            
+        if data.get("success") and data.get("link"):
+            link = data["link"]
+            await update.message.reply_text(
+                f"🔗 *Link Login Ditemukan!*\n\n"
+                f"Klik link di bawah ini (dari HP yang ada aplikasi Alight Motion-nya):\n"
+                f"{link}",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(f"❌ Gagal: {data.get('message', 'Link belum masuk atau email salah.')}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
 
 
 async def route_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -142,6 +177,7 @@ async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("login", cmd_login))
     app.add_handler(CallbackQueryHandler(cb_auto, pattern="^auto$"))
     app.add_handler(CallbackQueryHandler(cb_manual, pattern="^manual$"))
     app.add_handler(CallbackQueryHandler(cb_stats, pattern="^stats$"))
