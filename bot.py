@@ -27,9 +27,9 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Statistik", callback_data="stats")],
     ]
     await update.message.reply_text(
-        "🤖 *Alight Motion Farming Bot*\n\nPilih mode:",
+        "🤖 <b>Alight Motion Farming Bot</b>\n\nPilih mode:",
         reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -44,7 +44,7 @@ async def cb_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             data = r.json()
     except Exception as e:
         logger.exception("auto error")
-        await q.edit_message_text(f"❌ Error backend: `{e}`", parse_mode="Markdown")
+        await q.edit_message_text(f"❌ Error backend: <code>{e}</code>", parse_mode="HTML")
         return
 
     if not data.get("success"):
@@ -53,28 +53,28 @@ async def cb_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     d = data.get("data", {})
     text = (
-        f"✅ *Akun Premium Berhasil Dibuat!*\n\n"
-        f"📧 Email: `{d.get('email')}`\n"
-        f"🆔 UID: `{d.get('uid')}`\n"
-        f"🧾 Order: `{d.get('orderId')}`\n"
-        f"📅 Valid: `{d.get('validUntil')}`\n\n"
-        f"📌 *CARA LOGIN DI APLIKASI ALIGHT MOTION:*\n"
+        f"✅ <b>Akun Premium Berhasil Dibuat!</b>\n\n"
+        f"📧 Email: <code>{d.get('email')}</code>\n"
+        f"🆔 UID: <code>{d.get('uid')}</code>\n"
+        f"🧾 Order: <code>{d.get('orderId')}</code>\n"
+        f"📅 Valid: <code>{d.get('validUntil')}</code>\n\n"
+        f"📌 <b>CARA LOGIN DI APLIKASI ALIGHT MOTION:</b>\n"
         f"1. Buka aplikasi Alight Motion di HP Anda.\n"
-        f"2. Pilih menu *Login with Email*.\n"
-        f"3. Masukkan email di atas: `{d.get('email')}`\n"
+        f"2. Pilih menu <i>Login with Email</i>.\n"
+        f"3. Masukkan email di atas: <code>{d.get('email')}</code>\n"
         f"4. Klik tombol 'Kirim Magic Link' di aplikasi.\n"
         f"5. Ketik perintah ini di bot untuk mengambil link login:\n"
-        f"   `/login {d.get('email')}`\n"
-        f"6. Bot akan mengirim link. Klik link tersebut dari HP yang ada aplikasinya, dan akun premium siap dipakai! 🎉"
+        f"   <code>/login {d.get('email')}</code>\n"
+        f"6. Bot akan mengirim tombol link. Klik tombol tersebut, dan akun premium siap dipakai! 🎉"
     )
-    await q.edit_message_text(text, parse_mode="Markdown")
+    await q.edit_message_text(text, parse_mode="HTML")
 
 
 async def cb_manual(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     ctx.user_data["mode"] = "send"
-    await q.edit_message_text("Kirim email tujuan (contoh: `user@gmail.com`):", parse_mode="Markdown")
+    await q.edit_message_text("Kirim email tujuan (contoh: <code>user@gmail.com</code>):", parse_mode="HTML")
 
 
 async def cb_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -83,18 +83,18 @@ async def cb_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.get(f"{BACKEND}/api/stats")
-        await q.edit_message_text(f"📊 Statistik:\n`{r.text[:3500]}`", parse_mode="Markdown")
+        await q.edit_message_text(f"📊 Statistik:\n<code>{r.text[:3500]}</code>", parse_mode="HTML")
     except Exception as e:
         await q.edit_message_text(f"❌ {e}")
 
 
 async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(ctx.args) == 0:
-        await update.message.reply_text("Format salah. Gunakan: `/login email@domain.com`", parse_mode="Markdown")
+        await update.message.reply_text("Format salah. Gunakan: <code>/login email@domain.com</code>", parse_mode="HTML")
         return
         
     email = ctx.args[0]
-    await update.message.reply_text(f"⏳ Mengecek inbox untuk `{email}`...\n_(Tunggu hingga 30 detik)_", parse_mode="Markdown")
+    msg = await update.message.reply_text(f"⏳ Mengecek inbox untuk <code>{email}</code>...\n<i>(Tunggu hingga 30 detik)</i>", parse_mode="HTML")
     
     try:
         async with httpx.AsyncClient(timeout=60) as c:
@@ -106,24 +106,26 @@ async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             oob = data.get("oobCode", "-")
             
             text = (
-                f"🔗 *Link Login Ditemukan!*\n\n"
-                f"📌 *Kode OOB:* `{oob}`\n\n"
-                f"*Cara 1 (Otomatis via HP):*\n"
-                f"Klik link di bawah ini (pastikan aplikasi Alight Motion sudah terinstall di HP ini):\n"
-                f"{link}\n\n"
-                f"*Cara 2 (Manual di Aplikasi):*\n"
-                f"Jika link di atas malah buka browser, buka aplikasi Alight Motion -> Pilih Login -> Masukkan kode OOB di atas."
+                f"🔗 <b>Link Login Ditemukan!</b>\n\n"
+                f"📌 <b>Kode OOB:</b> <code>{oob}</code>\n\n"
+                f"<b>Cara 1 (Otomatis via HP):</b>\n"
+                f"Klik tombol di bawah ini (pastikan aplikasi Alight Motion sudah terinstall di HP ini):\n\n"
+                f"<b>Cara 2 (Manual di Aplikasi):</b>\n"
+                f"Jika tombol di bawah malah buka browser, buka aplikasi Alight Motion -> Pilih Login -> Masukkan kode OOB di atas."
             )
             
-            await update.message.reply_text(
+            # Membuat tombol URL yang aman dari error parsing
+            keyboard = [[InlineKeyboardButton("🔗 Buka Aplikasi Alight Motion", url=link)]]
+            
+            await msg.edit_text(
                 text,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
-            await update.message.reply_text(f"❌ Gagal: {data.get('message', 'Link belum masuk atau email salah.')}")
+            await msg.edit_text(f"❌ Gagal: {data.get('message', 'Link belum masuk atau email salah.')}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        await msg.edit_text(f"❌ Error: {e}")
 
 
 async def route_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -153,9 +155,9 @@ async def handle_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        f"{'✅' if ok else '❌'} {'Link terkirim' if ok else 'Gagal kirim'} ke `{email}`.\n\n"
+        f"{'✅' if ok else '❌'} {'Link terkirim' if ok else 'Gagal kirim'} ke <code>{email}</code>.\n\n"
         f"Paste URL magic link dari inbox:",
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -178,8 +180,8 @@ async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.get("success") or data.get("status"):
         d = data.get("data", {})
         await update.message.reply_text(
-            f"✅ Premium aktif `{email}`\nValid: `{d.get('validUntil', '-')}`",
-            parse_mode="Markdown",
+            f"✅ Premium aktif <code>{email}</code>\nValid: <code>{d.get('validUntil', '-')}</code>",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(f"❌ Gagal: {data}")
