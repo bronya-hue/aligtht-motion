@@ -2,6 +2,7 @@ import os
 import logging
 import httpx
 import asyncio
+import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -106,8 +107,10 @@ async def cmd_bulk(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Jumlah harus berupa angka.")
         return
 
-    msg = await update.message.reply_text(f"⏳ Memulai bulk farming {count} akun...\nProses ini akan memakan waktu.")
+    msg = await update.message.reply_text(f"⏳ Memulai bulk farming {count} akun...\nProses ini akan memakan waktu ±{count * 10} detik.")
     success, fail, results = 0, 0, []
+    
+    filename = f"hasil_farming_{int(datetime.datetime.now().timestamp())}.txt"
 
     for i in range(count):
         try:
@@ -115,18 +118,61 @@ async def cmd_bulk(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 r = await c.post(f"{BACKEND}/api/auto", json={})
                 data = r.json()
             if data.get("success"):
-                results.append(f"✅ {data['data']['email']}")
+                d = data['data']
+                results.append(f"Email: {d['email']} | UID: {d['uid']} | Order: {d['orderId']}")
                 success += 1
-            else: fail += 1
-        except: fail += 1
+            else: 
+                fail += 1
+        except: 
+            fail += 1
             
         await asyncio.sleep(10) # Jeda antar akun
         
         if (i+1) % 5 == 0 or (i+1) == count:
             await msg.edit_text(f"⏳ Proses: {i+1}/{count}\n✅ Sukses: {success}\n❌ Gagal: {fail}")
 
-    result_text = f"🏁 <b>Bulk Selesai</b>\n✅ Sukses: {success}\n❌ Gagal: {fail}\n\n" + "\n".join(results[-10:])
+    # Teks instruksi untuk di pesan Telegram dan file txt
+    instruksi = (
+        "📌 CARA LOGIN DI APLIKASI ALIGHT MOTION:\n"
+        "1. Buka aplikasi Alight Motion di HP Anda.\n"
+        "2. Pilih menu 'Login with Email'.\n"
+        "3. Masukkan SALAH SATU email dari daftar di bawah.\n"
+        "4. Klik tombol 'Kirim Magic Link' di aplikasi.\n"
+        "5. Ketik perintah ini di bot: /login email_yang_dipilih\n"
+        "6. Bot akan mengirim tombol link. Klik tombol tersebut dari HP Anda, dan akun premium siap dipakai!\n"
+        "--------------------------------------------------\n\n"
+    )
+
+    # Simpan ke file txt
+    with open(filename, 'w') as f:
+        f.write(f"=== HASIL FARMING ALIGHT MOTION ===\n")
+        f.write(f"Tanggal: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total Sukses: {success}\n")
+        f.write(f"Total Gagal: {fail}\n\n")
+        f.write(instruksi)
+        f.write("\n".join(results))
+
+    # Tampilkan ringkasan akhir + instruksi singkat di chat
+    result_text = (
+        f"🏁 <b>Bulk Selesai</b>\n"
+        f"✅ Sukses: {success}\n"
+        f"❌ Gagal: {fail}\n\n"
+        f"📌 <b>CARA LOGIN:</b>\n"
+        f"1. Buka aplikasi Alight Motion -> Login with Email.\n"
+        f"2. Masukkan salah satu email di file txt.\n"
+        f"3. Ketik <code>/login email_tersebut</code> di bot ini.\n\n"
+        f"Silakan unduh file di bawah untuk melihat daftar lengkap akun."
+    )
     await msg.edit_text(result_text, parse_mode="HTML")
+    
+    # Kirim file txt ke Telegram
+    if success > 0:
+        with open(filename, 'rb') as document:
+            await update.message.reply_document(
+                document=document,
+                filename=filename,
+                caption=f"✅ Berhasil membuat {success} akun premium.\nBaca instruksi di dalam file untuk cara login."
+            )
 
 async def cb_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
