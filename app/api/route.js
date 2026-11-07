@@ -5,6 +5,8 @@ const verifyLinkRoute = require('./verify-link/route');
 const statsRoute = require('./stats/route');
 const emailRoute = require('./email/route');
 const autoRoute = require('./auto/route');
+const mailAccounts = require('../../lib/mail-store');
+const fetch = require('node-fetch');
 
 const router = express.Router();
 
@@ -22,50 +24,64 @@ router.post('/inbox', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ success: false, message: 'Email required' });
 
+    const account = mailAccounts.get(email);
+    if (!account) {
+        return res.json({ 
+            success: false, 
+            message: 'Akun email tidak ditemukan. Pastikan email ini dibuat melalui bot (fitur Auto Premium), atau server bot baru saja restart.' 
+        });
+    }
+
     try {
-        // ⚠️ CATATAN PENTING:
-        // Di bawah ini adalah contoh menggunakan API mail.tm.
-        // Karena bot Anda berhasil membuat email @fldubai.com, Anda HARUS menyesuaikan
-        // logika fetch di bawah ini dengan API temp mail yang Anda gunakan di endpoint /auto.
-        
-        // CONTOH (Silakan ganti dengan logika API temp mail Anda):
-        /*
+        // 1. Dapatkan token baru dari mail.tm
         const tokenRes = await fetch('https://api.mail.tm/token', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address: email, password: 'password_anda' })
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ address: email, password: account.password })
         });
         const tokenData = await tokenRes.json();
         
+        if (!tokenData.token) {
+            return res.json({ success: false, message: 'Gagal login ke mail.tm. Sesi mungkin sudah expired, silakan buat akun baru.' });
+        }
+
+        // 2. Ambil daftar pesan
         const msgRes = await fetch('https://api.mail.tm/messages', {
-            headers: { Authorization: `Bearer ${tokenData.token}` }
+            headers: { 'Authorization': `Bearer ${tokenData.token}` }
         });
-        const messages = await msgRes.json();
+        const msgData = await msgRes.json();
+        const messages = msgData['hydra:member'] || [];
+
+        if (messages.length === 0) {
+            return res.json({ 
+                success: false, 
+                message: 'Inbox kosong. Buka aplikasi Alight Motion, masukkan email ini, klik "Kirim Magic Link", lalu tunggu 10 detik dan coba /login lagi.' 
+            });
+        }
+
+        // 3. Ambil pesan terbaru dan cari linknya
+        const latestMsg = messages[0];
+        const detailRes = await fetch(`https://api.mail.tm/messages/${latestMsg.id}`, {
+            headers: { 'Authorization': `Bearer ${tokenData.token}` }
+        });
+        const detail = await detailRes.json();
+        
+        // Gabungkan text dan html untuk mencari link
+        const text = (detail.text || '') + ' ' + (detail.html || '');
+        const urls = text.match(/https?:\/\/[^\s"'<>]+/g);
         
         let magicLink = null;
-        for (const msg of messages['hydra:member'] || []) {
-            const detailRes = await fetch(`https://api.mail.tm/messages/${msg.id}`, {
-                headers: { Authorization: `Bearer ${tokenData.token}` }
-            });
-            const detail = await detailRes.json();
-            const text = detail.text || '';
-            
-            const urls = text.match(/https?:\/\/[^\s]+/g);
-            if (urls) {
-                magicLink = urls.find(u => u.includes('oobCode') || u.includes('alight'));
-                if (magicLink) break;
-            }
+        if (urls) {
+            magicLink = urls.find(u => u.includes('oobCode') || u.includes('alight'));
         }
-
+        
         if (magicLink) {
+            // Kadang link dari HTML punya karakter &amp; yang harus dibersihkan
+            magicLink = magicLink.replace(/&amp;/g, '&');
             return res.json({ success: true, link: magicLink });
         } else {
-            return res.json({ success: false, message: 'Link belum masuk ke inbox.' });
+            return res.json({ success: false, message: 'Email masuk, tapi link verifikasi tidak ditemukan di dalamnya.' });
         }
-        */
-
-        // SEMENTARA: Kirim respons palsu jika API belum disesuaikan
-        return res.json({ success: false, message: 'Endpoint siap, tapi logika API temp mail belum disesuaikan.' });
 
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
