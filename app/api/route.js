@@ -33,7 +33,7 @@ router.post('/inbox', async (req, res) => {
     }
 
     try {
-        // 1. Dapatkan token baru dari mail.tm
+        // 1. Dapatkan token baru dari mail.tm menggunakan password yang tersimpan
         const tokenRes = await fetch('https://api.mail.tm/token', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -59,26 +59,21 @@ router.post('/inbox', async (req, res) => {
             });
         }
 
-        // 3. Ambil pesan terbaru dan cari linknya
+        // 3. Ambil pesan terbaru dan download raw email untuk ekstrak link
         const latestMsg = messages[0];
-        const detailRes = await fetch(`https://api.mail.tm/messages/${latestMsg.id}`, {
+        const downloadRes = await fetch(`https://api.mail.tm/messages/${latestMsg.id}/download`, {
             headers: { 'Authorization': `Bearer ${tokenData.token}` }
         });
-        const detail = await detailRes.json();
+        const raw = await downloadRes.text();
         
-        // Gabungkan text dan html untuk mencari link
-        const text = (detail.text || '') + ' ' + (detail.html || '');
-        const urls = text.match(/https?:\/\/[^\s"'<>]+/g);
+        // Decode format email (quoted-printable)
+        let joined = raw.replace(/=\r?\n/g, '').replace(/=3D/g, '=');
         
-        let magicLink = null;
-        if (urls) {
-            magicLink = urls.find(u => u.includes('oobCode') || u.includes('alight'));
-        }
+        // Cari URL lengkap yang mengandung oobCode
+        const urlMatch = joined.match(/https?:\/\/[^\s"'<>]+oobCode[^\s"'<>]+/i);
         
-        if (magicLink) {
-            // Kadang link dari HTML punya karakter &amp; yang harus dibersihkan
-            magicLink = magicLink.replace(/&amp;/g, '&');
-            return res.json({ success: true, link: magicLink });
+        if (urlMatch) {
+            return res.json({ success: true, link: urlMatch[0] });
         } else {
             return res.json({ success: false, message: 'Email masuk, tapi link verifikasi tidak ditemukan di dalamnya.' });
         }
