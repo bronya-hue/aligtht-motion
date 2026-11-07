@@ -1,125 +1,174 @@
-const express = require('express');
-const crypto = require('crypto');
-const fetch = require('node-fetch');
-const mailAccounts = require('../../../lib/mail-store'); // Import gudang password
+const express = require('express')
+const auth = require('../../../lib/auth')
+const { friendlyFirebaseError } = require('../../../lib/errors')
+const { incrementStats, getStats } = require('../../../lib/stats')
+const fetch = require('node-fetch')
+const crypto = require('crypto')
+const mailAccounts = require('../../../lib/mail-store') // <-- IMPORT GUDANG PASSWORD
 
-const router = express.Router();
+const router = express.Router()
+const MAILTM_BASE = 'https://api.mail.tm'
 
-// Konfigurasi API
-const MAILTM_BASE = 'https://api.mail.tm';
-const ALIGHT_API = 'https://api.alightmotion.com'; // Sesuaikan jika ada perubahan
-
-router.post('/', async (req, res) => {
-    try {
-        // 1. Buat email & password acak baru
-        const domainsRes = await fetch(`${MAILTM_BASE}/domains`);
-        const domainsData = await domainsRes.json();
-        const domain = domainsData['hydra:member'][0].domain;
-        
-        const address = `neo${crypto.randomBytes(6).toString('hex')}@${domain}`;
-        const password = crypto.randomBytes(12).toString('base64url') + 'X1!';
-
-        // 2. Daftarkan email ke mail.tm
-        const regRes = await fetch(`${MAILTM_BASE}/accounts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address, password })
-        });
-        if (!regRes.ok) throw new Error('Gagal mendaftarkan email ke mail.tm');
-
-        // 3. Login untuk mendapatkan token inbox
-        const tokenRes = await fetch(`${MAILTM_BASE}/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address, password })
-        });
-        const tokenData = await tokenRes.json();
-        if (!tokenData.token) throw new Error('Gagal login ke mail.tm');
-
-        // ==========================================
-        // 💾 SIMPAN PASSWORD KE GUDANG (PENTING!)
-        // ==========================================
-        mailAccounts.set(address, { password, token: tokenData.token });
-
-        // 4. Kirim request Magic Link ke Alight Motion
-        await fetch(`${ALIGHT_API}/api/auth/magic-link`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': 'okhttp/4.9.2',
-                'x-android-package': 'com.alightcreative.motion',
-                'x-android-cert': '...' // Jika kode asli Anda punya cert fingerprint, tambahkan di sini
-            },
-            body: JSON.stringify({ email: address })
-        });
-
-        // 5. Polling inbox menunggu email masuk
-        let magicLink = null;
-        for (let i = 0; i < 20; i++) {
-            await new Promise(r => setTimeout(r, 3000)); // Tunggu 3 detik
-            
-            const msgRes = await fetch(`${MAILTM_BASE}/messages`, {
-                headers: { 'Authorization': `Bearer ${tokenData.token}` }
-            });
-            const msgData = await msgRes.json();
-            const messages = msgData['hydra:member'] || [];
-
-            if (messages.length > 0) {
-                const msgId = messages[0].id;
-                const detailRes = await fetch(`${MAILTM_BASE}/messages/${msgId}`, {
-                    headers: { 'Authorization': `Bearer ${tokenData.token}` }
-                });
-                const detail = await detailRes.json();
-                const text = detail.text || '';
-                const urls = text.match(/https?:\/\/[^\s]+/g);
-                if (urls) {
-                    magicLink = urls.find(u => u.includes('oobCode') || u.includes('alight'));
-                    if (magicLink) break;
-                }
-            }
-        }
-
-        if (!magicLink) throw new Error('link verifikasi tidak ditemukan di email');
-
-        // 6. Verifikasi link & dapatkan idToken
-        // (Sesuaikan endpoint verify ini dengan kode asli repo Anda)
-        const verifyRes = await fetch(`${ALIGHT_API}/api/auth/verify-link`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: address, magicLink })
-        });
-        const verifyData = await verifyRes.json();
-        const idToken = verifyData.idToken;
-        if (!idToken) throw new Error('Gagal mendapatkan token verifikasi');
-
-        // 7. Aktifkan Premium (verifyPurchase)
-        // (Sesuaikan endpoint ini dengan kode asli repo Anda)
-        const purchaseRes = await fetch(`${ALIGHT_API}/api/verifyPurchase`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`
-            },
-            body: JSON.stringify({ idToken })
-        });
-        const purchaseData = await purchaseRes.json();
-
-        // 8. Sukses! Kembalikan data ke bot
-        return res.json({
-            success: true,
-            data: {
-                email: address,
-                uid: purchaseData.uid || verifyData.uid || 'Unknown',
-                orderId: purchaseData.orderId || `neo-${crypto.randomBytes(4).toString('hex')}`,
-                validUntil: '7 November 2027', // Atau ambil dari respons purchaseData
-                idToken: idToken
-            }
-        });
-
-    } catch (error) {
-        console.error('Auto Error:', error);
-        return res.status(500).json({ success: false, message: error.message });
+// Create a temporary mail.tm account
+async function createMailAccount() {
+    const domainRes = await fetch(`${MAILTM_BASE}/domains`)
+    const domainData = await domainRes.json()
+    const domains = domainData['hydra:member'] || domainData.data || []
+    if (!domains.length) throw new Error('mail.tm: no domains available')
+    
+    const domain = domains[0].domain
+    const username = 'neo' + crypto.randomBytes(5).toString('hex')
+    const address = `${username}@${domain}`
+    const password = crypto.randomBytes(12).toString('base64url') + 'X1!'
+    
+    const createRes = await fetch(`${MAILTM_BASE}/accounts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address, password })
+    })
+    if (!createRes.ok) {
+        const err = await createRes.json()
+        throw new Error(`mail.tm create failed: ${JSON.stringify(err)}`)
     }
-});
+    
+    // Get auth token
+    const tokenRes = await fetch(`${MAILTM_BASE}/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address, password })
+    })
+    const tokenData = await tokenRes.json()
+    if (!tokenData.token) throw new Error('mail.tm: failed to get token')
+    
+    // ==========================================
+    // 💾 SIMPAN PASSWORD KE GUDANG (FITUR BARU)
+    // ==========================================
+    mailAccounts.set(address, { password, token: tokenData.token })
+    
+    return { address, token: tokenData.token }
+}
 
-module.exports = router;
+// Poll mail.tm inbox for new messages
+async function pollMailInbox(token, timeoutMs = 90000, intervalMs = 4000) {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+        try {
+            const r = await fetch(`${MAILTM_BASE}/messages`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            const d = await r.json()
+            const msgs = d['hydra:member'] || d.data || []
+            if (msgs.length > 0) {
+                return { ok: true, messageId: msgs[0].id }
+            }
+        } catch {}
+        await new Promise(res => setTimeout(res, intervalMs))
+    }
+    return { ok: false, why: 'inbox timeout — email tidak ditemukan dalam 90 detik' }
+}
+
+// Get raw email content and extract oobCode from the Firebase link
+async function extractAuthUrl(token, messageId) {
+    const r = await fetch(`${MAILTM_BASE}/messages/${messageId}/download`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    })
+    const raw = await r.text()
+    
+    // Join MIME-continuation lines (quoted-printable: = at end of line)
+    let joined = raw.replace(/=\r?\n/g, '')
+    
+    // Decode =3D (quoted-printable for "=")
+    joined = joined.replace(/=3D/g, '=')
+    
+    // Extract oobCode directly from the joined text
+    const codeMatch = joined.match(/oobCode(?:%3D|=)([a-zA-Z0-9_-]+)/i)
+    if (codeMatch) return codeMatch[1]
+    
+    throw new Error('link verifikasi tidak ditemukan di email')
+}
+
+// POST /api/auto — One-click full automation
+router.post('/', async (req, res) => {
+    const log = []
+    const push = (step, msg) => log.push({ step, message: msg, at: new Date().toISOString() })
+    
+    try {
+        // Step 1: Create temp email via mail.tm
+        push('init', 'membuat email sementara...')
+        const { address: email, token: mailToken } = await createMailAccount()
+        push('email', `email dibuat: ${email}`)
+        
+        // Step 2: Send magic link
+        push('link', 'mengirim magic link...')
+        const lr = await auth.link(email)
+        if (!lr.ok) {
+            push('error', `link gagal: ${friendlyFirebaseError(lr.why)}`)
+            return res.json({ success: false, message: friendlyFirebaseError(lr.why), log })
+        }
+        push('link', 'link terkirim, menunggu inbox...')
+        
+        // Step 3: Poll inbox
+        push('poll', 'menunggu email masuk (~30-60 detik)...')
+        const inbox = await pollMailInbox(mailToken, 90000, 4000)
+        if (!inbox.ok) {
+            push('error', inbox.why)
+            return res.json({ success: false, message: inbox.why, log })
+        }
+        push('poll', 'email diterima, mengekstrak link...')
+        
+        // Step 4: Extract auth URL or oobCode
+        const authLink = await extractAuthUrl(mailToken, inbox.messageId)
+        push('extract', `link ditemukan: ${authLink.slice(0, 40)}...`)
+        
+        // Step 5: Verify
+        push('verify', 'memverifikasi link...')
+        const v = await auth.auth(email, authLink)
+        if (!v.ok) {
+            push('error', `verifikasi gagal: ${friendlyFirebaseError(v.why)}`)
+            return res.json({ success: false, message: friendlyFirebaseError(v.why), log })
+        }
+        push('verify', 'verifikasi berhasil')
+        
+        // Step 6: Activate premium
+        push('premium', 'mengaktifkan premium...')
+        const premium = await auth.pro(v.id)
+        const stats = premium.ok ? incrementStats() : getStats()
+        
+        const now = new Date()
+        const until = new Date(now)
+        until.setFullYear(until.getFullYear() + 1)
+        
+        if (premium.ok) {
+            push('done', 'premium aktif!')
+        } else {
+            push('warn', `login berhasil, premium error: ${premium.why}`)
+        }
+        
+        return res.json({
+            success: premium.ok,
+            message: premium.ok ? `premium aktif untuk ${email}` : `login berhasil, tapi aktivasi premium gagal: ${premium.why}`,
+            data: {
+                stats,
+                email,
+                uid: v.uid,
+                orderId: premium.order || null,
+                status: premium.ok ? 'ACTIVE' : 'INACTIVE',
+                membershipStatus: premium.ok ? 'PREMIUM_ACTIVE' : 'LOGIN_ONLY',
+                planName: 'Alight Motion Pro / Member',
+                subscriptionType: 'Yearly VIP License',
+                activatedAt: now.toISOString(),
+                validUntil: until.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }),
+                idToken: v.id,
+                refreshToken: v.ref,
+                isNewUser: v.baru,
+                premiumError: premium.ok ? null : premium.why
+            },
+            log
+        })
+    } catch (e) {
+        push('error', e.message)
+        return res.status(500).json({ success: false, message: e.message, log })
+    }
+})
+
+module.exports = router
