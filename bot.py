@@ -65,7 +65,7 @@ async def cb_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"4. Klik tombol 'Kirim Magic Link' di aplikasi.\n"
         f"5. Ketik perintah ini di bot untuk mengambil link login:\n"
         f"   `/login {d.get('email')}`\n"
-        f"6. Bot akan mengirim link. Klik link tersebut, dan akun premium siap dipakai! 🎉"
+        f"6. Bot akan mengirim link. Klik link tersebut dari HP yang ada aplikasinya, dan akun premium siap dipakai! 🎉"
     )
     await q.edit_message_text(text, parse_mode="Markdown")
 
@@ -103,11 +103,22 @@ async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             
         if data.get("success") and data.get("link"):
             link = data["link"]
-            await update.message.reply_text(
+            oob = data.get("oobCode", "-")
+            
+            text = (
                 f"🔗 *Link Login Ditemukan!*\n\n"
-                f"Klik link di bawah ini (dari HP yang ada aplikasi Alight Motion-nya):\n"
-                f"{link}",
-                parse_mode="Markdown"
+                f"📌 *Kode OOB:* `{oob}`\n\n"
+                f"*Cara 1 (Otomatis via HP):*\n"
+                f"Klik link di bawah ini (pastikan aplikasi Alight Motion sudah terinstall di HP ini):\n"
+                f"{link}\n\n"
+                f"*Cara 2 (Manual di Aplikasi):*\n"
+                f"Jika link di atas malah buka browser, buka aplikasi Alight Motion -> Pilih Login -> Masukkan kode OOB di atas."
+            )
+            
+            await update.message.reply_text(
+                text,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
             )
         else:
             await update.message.reply_text(f"❌ Gagal: {data.get('message', 'Link belum masuk atau email salah.')}")
