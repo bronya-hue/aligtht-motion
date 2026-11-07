@@ -58,22 +58,22 @@ router.post('/inbox', async (req, res) => {
         if (urlMatch) {
             let link = urlMatch[0].replace(/&amp;/g, '&');
             
-            // =========================================================
-            // PERBAIKAN: Ambil link asli Alight Motion & Kode OOB
-            // =========================================================
             const redirectMatch = link.match(/[?&]link=([^&]+)/);
             if (redirectMatch) {
-                // Jika link adalah redirector Firebase, ambil link aslinya (alightcreative.com)
                 link = decodeURIComponent(redirectMatch[1]);
             }
             
-            // Ambil kode oobCode (misal: sFoK26Ssgv7lX5E...)
             const oobMatch = link.match(/oobCode(?:%3D|=)([a-zA-Z0-9_-]+)/i);
             const oobCode = oobMatch ? oobMatch[1] : 'Tidak ditemukan';
 
+            // Pastikan URL valid dan aman untuk Telegram
+            if (!link.startsWith('http')) {
+                link = 'https://' + link;
+            }
+
             return res.json({ 
                 success: true, 
-                link: link.replace(/\/\//g, '/'), // Bersihkan double slash
+                link: link, // <-- Tidak ada lagi fungsi replace(//) yang merusak link
                 oobCode: oobCode
             });
         } else {
