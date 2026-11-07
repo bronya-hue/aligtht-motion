@@ -18,18 +18,34 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN belum di-set di environment")
 
+# ==========================================
+# MENU UTAMA
+# ==========================================
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Desain menu baru yang lebih rapi
+    text = (
+        "🤖 <b>Alight Motion Farming Bot</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Silakan pilih menu di bawah ini:\n\n"
+        "⚡ <b>Auto Premium</b>: Buat 1 akun premium secara instan.\n"
+        "🚀 <b>Bulk Farming</b>: Buat banyak akun sekaligus.\n"
+        "📧 <b>Manual Login</b>: Ambil link login untuk akun yang sudah ada.\n"
+    )
     kb = [
         [InlineKeyboardButton("⚡ Auto Premium", callback_data="auto")],
-        [InlineKeyboardButton("📧 Manual Magic Link", callback_data="manual")],
-        [InlineKeyboardButton("📊 Statistik", callback_data="stats")],
+        [InlineKeyboardButton("🚀 Bulk Farming", callback_data="bulk_menu")],
+        [InlineKeyboardButton("📧 Manual Login", callback_data="manual")],
+        [InlineKeyboardButton("📊 Statistik", callback_data="stats")]
     ]
     await update.message.reply_text(
-        "🤖 <b>Alight Motion Farming Bot</b>\n\nPilih mode:\nGunakan perintah <code>/bulk [jumlah]</code> untuk farming massal.",
+        text,
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="HTML",
     )
 
+# ==========================================
+# FITUR AUTO PREMIUM
+# ==========================================
 async def cb_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer("Memproses...")
@@ -65,6 +81,98 @@ async def cb_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     await q.edit_message_text(text, parse_mode="HTML")
 
+# ==========================================
+# FITUR BULK FARMING (TOMBOL & PROSES)
+# ==========================================
+async def cb_bulk_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    # Set state agar bot menunggu input angka dari user
+    ctx.user_data["mode"] = "bulk_amount"
+    await q.edit_message_text(
+        "🚀 <b>Bulk Farming</b>\n\n"
+        "Silakan ketik jumlah akun yang ingin dibuat.\n"
+        "Contoh: <code>10</code> (Maksimal 50 per proses)\n\n"
+        "Ketik /start untuk membatalkan.",
+        parse_mode="HTML"
+    )
+
+async def run_bulk_process(update: Update, ctx: ContextTypes.DEFAULT_TYPE, count: int):
+    msg = await update.message.reply_text(
+        f"⏳ Memulai bulk farming {count} akun...\n"
+        f"Estimasi waktu: ±{count * 10} detik.\n\n"
+        f"<i>Bot akan mengirim file txt jika sudah selesai.</i>", 
+        parse_mode="HTML"
+    )
+    
+    success, fail, results = 0, 0, []
+    filename = f"hasil_farming_{int(datetime.datetime.now().timestamp())}.txt"
+
+    for i in range(count):
+        try:
+            async with httpx.AsyncClient(timeout=150) as c:
+                r = await c.post(f"{BACKEND}/api/auto", json={})
+                data = r.json()
+            if data.get("success"):
+                d = data['data']
+                results.append(f"Email: {d['email']} | UID: {d['uid']} | Order: {d['orderId']}")
+                success += 1
+            else: 
+                fail += 1
+        except: 
+            fail += 1
+            
+        await asyncio.sleep(10) # Jeda antar akun
+        
+        if (i+1) % 5 == 0 or (i+1) == count:
+            await msg.edit_text(
+                f"⏳ Proses: {i+1}/{count}\n"
+                f"✅ Sukses: {success}\n"
+                f"❌ Gagal: {fail}"
+            )
+
+    instruksi = (
+        "📌 CARA LOGIN DI APLIKASI ALIGHT MOTION:\n"
+        "1. Buka aplikasi Alight Motion di HP Anda.\n"
+        "2. Pilih menu 'Login with Email'.\n"
+        "3. Masukkan SALAH SATU email dari daftar di bawah.\n"
+        "4. Klik tombol 'Kirim Magic Link' di aplikasi.\n"
+        "5. Ketik perintah ini di bot: /login email_yang_dipilih\n"
+        "6. Bot akan mengirim tombol link. Klik tombol tersebut dari HP Anda!\n"
+        "--------------------------------------------------\n\n"
+    )
+
+    with open(filename, 'w') as f:
+        f.write(f"=== HASIL FARMING ALIGHT MOTION ===\n")
+        f.write(f"Tanggal: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total Sukses: {success}\n")
+        f.write(f"Total Gagal: {fail}\n\n")
+        f.write(instruksi)
+        f.write("\n".join(results))
+
+    result_text = (
+        f"🏁 <b>Bulk Selesai</b>\n"
+        f"✅ Sukses: {success}\n"
+        f"❌ Gagal: {fail}\n\n"
+        f"📌 <b>CARA LOGIN:</b>\n"
+        f"1. Buka aplikasi Alight Motion -> Login with Email.\n"
+        f"2. Masukkan salah satu email di file txt.\n"
+        f"3. Ketik <code>/login email_tersebut</code> di bot ini.\n\n"
+        f"Silakan unduh file di bawah untuk melihat daftar lengkap akun."
+    )
+    await msg.edit_text(result_text, parse_mode="HTML")
+    
+    if success > 0:
+        with open(filename, 'rb') as document:
+            await update.message.reply_document(
+                document=document,
+                filename=filename,
+                caption=f"✅ Berhasil membuat {success} akun premium."
+            )
+
+# ==========================================
+# FITUR LOGIN MANUAL & STATISTIK
+# ==========================================
 async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(ctx.args) == 0:
         await update.message.reply_text("Format salah. Gunakan: <code>/login email@domain.com</code>", parse_mode="HTML")
@@ -94,85 +202,11 @@ async def cmd_login(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await msg.edit_text(f"❌ Error: {e}")
 
-async def cmd_bulk(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if len(ctx.args) == 0:
-        await update.message.reply_text("Format: <code>/bulk [jumlah]</code>\nContoh: <code>/bulk 10</code>", parse_mode="HTML")
-        return
-    try:
-        count = int(ctx.args[0])
-        if count > 50: 
-            await update.message.reply_text("Maksimal 50 akun per perintah agar server tidak down.")
-            return
-    except ValueError:
-        await update.message.reply_text("Jumlah harus berupa angka.")
-        return
-
-    msg = await update.message.reply_text(f"⏳ Memulai bulk farming {count} akun...\nProses ini akan memakan waktu ±{count * 10} detik.")
-    success, fail, results = 0, 0, []
-    
-    filename = f"hasil_farming_{int(datetime.datetime.now().timestamp())}.txt"
-
-    for i in range(count):
-        try:
-            async with httpx.AsyncClient(timeout=150) as c:
-                r = await c.post(f"{BACKEND}/api/auto", json={})
-                data = r.json()
-            if data.get("success"):
-                d = data['data']
-                results.append(f"Email: {d['email']} | UID: {d['uid']} | Order: {d['orderId']}")
-                success += 1
-            else: 
-                fail += 1
-        except: 
-            fail += 1
-            
-        await asyncio.sleep(10) # Jeda antar akun
-        
-        if (i+1) % 5 == 0 or (i+1) == count:
-            await msg.edit_text(f"⏳ Proses: {i+1}/{count}\n✅ Sukses: {success}\n❌ Gagal: {fail}")
-
-    # Teks instruksi untuk di pesan Telegram dan file txt
-    instruksi = (
-        "📌 CARA LOGIN DI APLIKASI ALIGHT MOTION:\n"
-        "1. Buka aplikasi Alight Motion di HP Anda.\n"
-        "2. Pilih menu 'Login with Email'.\n"
-        "3. Masukkan SALAH SATU email dari daftar di bawah.\n"
-        "4. Klik tombol 'Kirim Magic Link' di aplikasi.\n"
-        "5. Ketik perintah ini di bot: /login email_yang_dipilih\n"
-        "6. Bot akan mengirim tombol link. Klik tombol tersebut dari HP Anda, dan akun premium siap dipakai!\n"
-        "--------------------------------------------------\n\n"
-    )
-
-    # Simpan ke file txt
-    with open(filename, 'w') as f:
-        f.write(f"=== HASIL FARMING ALIGHT MOTION ===\n")
-        f.write(f"Tanggal: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Total Sukses: {success}\n")
-        f.write(f"Total Gagal: {fail}\n\n")
-        f.write(instruksi)
-        f.write("\n".join(results))
-
-    # Tampilkan ringkasan akhir + instruksi singkat di chat
-    result_text = (
-        f"🏁 <b>Bulk Selesai</b>\n"
-        f"✅ Sukses: {success}\n"
-        f"❌ Gagal: {fail}\n\n"
-        f"📌 <b>CARA LOGIN:</b>\n"
-        f"1. Buka aplikasi Alight Motion -> Login with Email.\n"
-        f"2. Masukkan salah satu email di file txt.\n"
-        f"3. Ketik <code>/login email_tersebut</code> di bot ini.\n\n"
-        f"Silakan unduh file di bawah untuk melihat daftar lengkap akun."
-    )
-    await msg.edit_text(result_text, parse_mode="HTML")
-    
-    # Kirim file txt ke Telegram
-    if success > 0:
-        with open(filename, 'rb') as document:
-            await update.message.reply_document(
-                document=document,
-                filename=filename,
-                caption=f"✅ Berhasil membuat {success} akun premium.\nBaca instruksi di dalam file untuk cara login."
-            )
+async def cb_manual(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    ctx.user_data["mode"] = "send"
+    await q.edit_message_text("Kirim email tujuan (contoh: <code>user@gmail.com</code>):", parse_mode="HTML")
 
 async def cb_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -184,9 +218,27 @@ async def cb_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await q.edit_message_text(f"❌ {e}")
 
+# ==========================================
+# ROUTER PESAN TEKS
+# ==========================================
 async def route_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     mode = ctx.user_data.get("mode")
-    if mode == "send":
+    
+    if mode == "bulk_amount":
+        ctx.user_data["mode"] = None
+        try:
+            count = int(update.message.text.strip())
+            if count > 50:
+                await update.message.reply_text("❌ Maksimal 50 akun per proses agar server tidak down.")
+                return
+            if count <= 0:
+                await update.message.reply_text("❌ Jumlah harus lebih dari 0.")
+                return
+            await run_bulk_process(update, ctx, count)
+        except ValueError:
+            await update.message.reply_text("❌ Format salah. Harap ketik angka saja (contoh: 10).")
+            
+    elif mode == "send":
         await handle_email(update, ctx)
     elif mode == "verify":
         await handle_link(update, ctx)
@@ -218,14 +270,23 @@ async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"❌ Gagal: {data}")
 
+# ==========================================
+# MAIN
+# ==========================================
 def main():
     app = Application.builder().token(TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", cmd_login))
-    app.add_handler(CommandHandler("bulk", cmd_bulk))
+    
     app.add_handler(CallbackQueryHandler(cb_auto, pattern="^auto$"))
+    app.add_handler(CallbackQueryHandler(cb_bulk_menu, pattern="^bulk_menu$"))
+    app.add_handler(CallbackQueryHandler(cb_manual, pattern="^manual$"))
     app.add_handler(CallbackQueryHandler(cb_stats, pattern="^stats$"))
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
+
+    logger.info("Bot starting...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
